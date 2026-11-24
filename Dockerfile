@@ -73,7 +73,7 @@ COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 RUN rm -f /etc/nginx/sites-enabled/default
 
-# Script that generates the create-game worker upstream at container start.
+# Script that generates the create-game worker upstream from NUM_WORKERS before nginx starts.
 COPY generate-nginx-upstream.sh /usr/local/bin/generate-nginx-upstream.sh
 RUN chmod +x /usr/local/bin/generate-nginx-upstream.sh
 
@@ -101,12 +101,25 @@ RUN echo "$GIT_COMMIT" > static/commit.txt
 
 ENV GIT_COMMIT="$GIT_COMMIT"
 
+# Render routes traffic to the exposed port. Nginx is the public-facing process;
+# Node and the game workers keep their existing internal ports.
+EXPOSE 10000
+
 RUN <<'EOF' tee /usr/local/bin/start.sh
 #!/bin/sh
+set -eu
+
+# Render supplies PORT; default to the documented container port locally.
+PORT="${PORT:-10000}"
+case "$PORT" in
+    *[!0-9]*) echo "Invalid PORT: $PORT" >&2; exit 1 ;;
+esac
+sed -i "s/listen 80 default_server;/listen ${PORT} default_server;/" /etc/nginx/conf.d/default.conf
+
 # Generate the create-game nginx upstream from NUM_WORKERS before nginx starts.
 /usr/local/bin/generate-nginx-upstream.sh
 
-if [ "$DOMAIN" = openfront.dev ] && [ "$SUBDOMAIN" != main ]; then
+if [ "${DOMAIN:-}" = openfront.dev ] && [ "${SUBDOMAIN:-}" != main ]; then
     exec timeout 25h /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
 else
     exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
